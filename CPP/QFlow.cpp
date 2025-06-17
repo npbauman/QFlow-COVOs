@@ -1,7 +1,6 @@
 #include <iostream>
 #include <vector>
 #include <algorithm>
-#include <numeric> // For accumulate
 #include <cstdlib> // For rand
 
 void generate_combinations(const std::vector<int>& input, int r, std::vector<std::vector<int>>& output) {
@@ -20,10 +19,13 @@ void generate_combinations(const std::vector<int>& input, int r, std::vector<std
 }
 
 int main() {
-    int nao   = 3; // Number of active occupied orbitals
-    int nav   = 3; // Number of active virtual orbitals
-    int nocc  = 10; // Total number of occupied orbitals
-    int nvirt = 20; // Total number of virtual orbitals
+    using IndexVector = std::vector<int>;
+
+    int nao    = 3; // Number of active occupied orbitals  == n_occ_alpha
+    int nav    = 3; // Number of active virtual orbitals == n_virt_alpha
+    int nocc   = 5; // Total number of occupied orbitals
+    int nvirt  = 5; // Total number of virtual orbitals
+    int cycles = 1; // Number of cycles to run
 
     // Skip this: This creates a random eval_sorted
     std::vector<double> eval_sorted(nocc+nvirt);
@@ -35,6 +37,7 @@ int main() {
 
 
     // STEP 1: Create master T1 and T2 Tensors (Global Pool)
+
 
     // STEP 2: Create a list of occupied and virtual combinations 
     //         of orbital and then combine those in all ways. 
@@ -105,19 +108,101 @@ int main() {
     std::cout << "Total combinations: " << sorted_combinations.size() << std::endl;
 
 
-    // STEP 3: 
-    
+    for (int cycle = 0; cycle < cycles; ++cycle) {
+        // STEP 3: 
+        std::cout << "Cycle " << cycle + 1 << " of " << cycles << std::endl;
+        
+        for (const auto& combination : sorted_combinations) {
+            std::cout << "Combination: ";
+            for (int idx : combination) {
+                std::cout << idx << " ";
+            }
+            std::cout << std::endl;
+
+            IndexVector occ_int_vec(combination.begin(), combination.begin() + 2*nao);
+            IndexVector virt_int_vec(combination.end() - 2*nav, combination.end());
+            
+            std::cout << "occ_int_vec: ";
+            for (int idx : occ_int_vec) {
+                std::cout << idx << " ";
+            }
+            std::cout << std::endl;
+
+            std::cout << "virt_int_vec: ";
+            for (int idx : virt_int_vec) {
+                std::cout << idx << " ";
+            }
+            std::cout << std::endl;
+
+            // Here you would call DUCC with the indices:
+            // IndexSpace MO_IS{
+            //     {"occ_int_vec", occ_int_vec},
+            //     {"virt_int_vec", virt_int_vec},
+            // }
+
+            // DUCC will print the active space Hamiltonian. For simplicity, the printing
+            // will be changed to all elements of hte AS Hamiltonian since we will be 
+            // dealing with small active spaces. 
+
+            // The python script to read and generate the file will need to be 
+            // incorporated/rewritten as a part of DUCC.
+            // XACC Ordering : OA | VA | OB | VB
+            std::vector<int> XACC_order(2 * (nao + nav));
+
+            // First nao values: first nao in occ_int_vec
+            std::copy(occ_int_vec.begin(), occ_int_vec.begin() + nao, XACC_order.begin());
+
+            // Next nav values: first nav in virt_int_vec
+            std::copy(virt_int_vec.begin(), virt_int_vec.begin() + nav, XACC_order.begin() + nao);
+
+            // Next nao values: last nao in occ_int_vec
+            std::copy(occ_int_vec.end() - nao, occ_int_vec.end(), XACC_order.begin() + nao + nav);
+
+            // Last nav values: last nav in virt_int_vec
+            std::copy(virt_int_vec.end() - nav, virt_int_vec.end(), XACC_order.begin() + 2 * nao + nav);
+
+            // DEBUG: Print XACC_order
+            std::cout << "XACC_order: ";
+            for (int idx : XACC_order) {
+                std::cout << idx << " ";
+            }
+            std::cout << std::endl;
+
+            // // XACC Format:
+            // for (int p = 0; p < nao + nav; ++p) {
+            //     for(int q = 0; q < nao + nav; ++q) {
+            //         h_xacc[p][q] = h[XACC_order[p]][XACC_order[q]];
+            //         for(int r = 0; r < nao + nav; ++r) {
+            //             for(int s = 0; s < nao + nav; ++s) {
+            //                 v_xacc[p][q][r][s] = v[XACC_order[p]][XACC_order[q]][XACC_order[r]][XACC_order[s]];
+            //                 //Have to check if this is correct (prefactor and order)
+            //             }
+            //         }
+            //     }
+            // }
+
+            // CALL NWQSim with h_xacc, v_xacc, and scalar
+        }
+
+        // // STEP 4: Update the T1 and T2 tensors from NWQSim
+        // for(const auto& combination : sorted_combinations) {
+        //     for (int p = 0; p < nao + nav; ++p) {
+        //         for(int q = 0; q < nao + nav; ++q) {
+        //             h[XACC_order[p]][XACC_order[q]] = h_xacc[p][q];
+        //             for(int r = 0; r < nao + nav; ++r) {
+        //                 for(int s = 0; s < nao + nav; ++s) {
+        //                     v[XACC_order[p]][XACC_order[q]][XACC_order[r]][XACC_order[s]] = v_xacc[p][q][r][s];
+        //                     //Have to check if this is correct (prefactor and order)
+        //                 }
+        //             }
+        //         }
+        //     }
+        // }
+    }
 
         
-    // }
 
 
-
-
-    // {"occ_int", {range(occ_alpha_ext, n_occ_alpha), range(n_occ_alpha + occ_beta_ext, nocc)}},
-    // {"virt_int",
-    //  {range(nocc, nocc + vir_alpha_int),
-    //   range(nocc + n_vir_alpha, nocc + n_vir_alpha + vir_beta_int)}},
 
 
     // When DUCC is called, the full T1 and T2 are taken in and 
