@@ -1,7 +1,10 @@
 #!/usr/bin/env python
 # coding: utf-8
 # Full FCI Solver (Based on fci_string.F logic)
+
+import cProfile
 import numpy as np
+from scipy.sparse.linalg import eigsh
 from itertools import combinations
 
 # ----------------------------
@@ -364,15 +367,13 @@ def build_fci_matrix(fci_strings, h, vc, vx, noccp, nvirt, noas, nobs, repulsion
 # ----------------------------
 
 def diagonalize_fci_matrix(matrix):
-   # Diagonalize using numpy.linalg.eigh (for symmetric/Hermitian matrices)
-    eigvals, eigvecs = np.linalg.eigh(matrix)
-    # Get lowest eigenvalue
-    lowest_energy = np.min(eigvals)
+    eigvals, eigvecs = eigsh(matrix, k=1, which='SA')
+    lowest_energy = eigvals[0]
     print("Lowest FCI energy:", f"{lowest_energy:.10f}")
     return lowest_energy, eigvals, eigvecs
 
 
-# In[ ]:
+
 
 
 # ----------------------------
