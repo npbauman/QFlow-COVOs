@@ -213,7 +213,7 @@ def compute_iphase(p, q, r, s, string):
 # Step 7: Matrix Construction Functions
 # ----------------------------
 
-def compute_double_excitation_element(string1, string2, i, j, vx, noccp, nvirt, matrix, diff):
+def compute_double_excitation_element(string1, string2, i, j, vx, noccp, nvirt, matrix, diff, spinorbital_map):
     plus, minus = get_excitation_indices(diff)
     if len(plus) != 2 or len(minus) != 2:
         return
@@ -231,10 +231,10 @@ def compute_double_excitation_element(string1, string2, i, j, vx, noccp, nvirt, 
     if not np.array_equal(test_string, string2):
         return
 
-    m, ps = map_spinorbital_to_spatial_and_spin(p, noccp, nvirt)
-    n, qs = map_spinorbital_to_spatial_and_spin(q, noccp, nvirt)
-    u, rs = map_spinorbital_to_spatial_and_spin(r, noccp, nvirt)
-    w, ss = map_spinorbital_to_spatial_and_spin(s, noccp, nvirt)
+    m, ps = spinorbital_map[p]
+    n, qs = spinorbital_map[q]
+    u, rs = spinorbital_map[r]
+    w, ss = spinorbital_map[s]
 
     val = 0.0
     if ps == rs and qs == ss and ps != qs:
@@ -247,7 +247,7 @@ def compute_double_excitation_element(string1, string2, i, j, vx, noccp, nvirt, 
     matrix[i, j] += iphase * val
     matrix[j, i] += iphase * val
 
-def compute_single_excitation_element(strings, i, j, h, vc, vx, noccp, nvirt, matrix, diff):
+def compute_single_excitation_element(strings, i, j, h, vc, vx, noccp, nvirt, matrix, diff, spinorbital_map):
     plus, minus = get_excitation_indices(diff)
     if len(plus) != 1 or len(minus) != 1:
         return
@@ -256,7 +256,7 @@ def compute_single_excitation_element(strings, i, j, h, vc, vx, noccp, nvirt, ma
     q = minus[0]
 
     string2 = strings[j]
-    ind_set = [(t, *map_spinorbital_to_spatial_and_spin(t,noccp, nvirt))
+    ind_set = [(t, *spinorbital_map[t])
                for t in range(len(string2)) if string2[t] == 1]
 
     if len(ind_set) != (noas + nobs):
@@ -270,12 +270,12 @@ def compute_single_excitation_element(strings, i, j, h, vc, vx, noccp, nvirt, ma
     tmp[p] = 1
     iphase = (-1) ** isum
 
-    p_h, _ = map_spinorbital_to_spatial_and_spin(p, noccp, nvirt)
-    q_h, _ = map_spinorbital_to_spatial_and_spin(q, noccp, nvirt)
+    p_h, _ = spinorbital_map[p]
+    q_h, _ = spinorbital_map[q]
     one_e = h[p_h, q_h]
 
-    w, ps = map_spinorbital_to_spatial_and_spin(p, noccp, nvirt)
-    n, qs = map_spinorbital_to_spatial_and_spin(q, noccp, nvirt)
+    w, ps = spinorbital_map[p]
+    n, qs = spinorbital_map[q]
 
     two_e = 0.0
     for t, u, ts in ind_set:
@@ -293,7 +293,7 @@ def compute_single_excitation_element(strings, i, j, h, vc, vx, noccp, nvirt, ma
     matrix[i, j] += total
     matrix[j, i] += total
 
-def handle_diagonal_element(strings, i, h, vc, vx, noccp, nvirt, repulsion, matrix):
+def handle_diagonal_element(strings, i, h, vc, vx, noccp, nvirt, repulsion, matrix, spinorbital_map):
     """
     Compute ⟨D_i | H | D_i⟩: the diagonal matrix element for determinant i.
     Includes:
@@ -312,7 +312,7 @@ def handle_diagonal_element(strings, i, h, vc, vx, noccp, nvirt, repulsion, matr
 
     # One-electron contribution
     for p in ind_set:
-        p_h, spin = map_spinorbital_to_spatial_and_spin(p, noccp, nvirt)
+        p_h, spin = spinorbital_map[p]
         diag_val += h[p_h, p_h]
         #print("p =", p, "→ h index =", p_h, "spin =", spin, "h[p,p] =", h[p_h, p_h], "running diag_val =", diag_val)
 
@@ -320,8 +320,8 @@ def handle_diagonal_element(strings, i, h, vc, vx, noccp, nvirt, repulsion, matr
     # Two-electron contribution
     for p in ind_set:
         for q in ind_set:
-            m, ps = map_spinorbital_to_spatial_and_spin(p, noccp, nvirt)
-            n, qs = map_spinorbital_to_spatial_and_spin(q, noccp, nvirt)
+            m, ps = spinorbital_map[p]
+            n, qs = spinorbital_map[q]
 
 
             if ps == qs:
@@ -340,25 +340,67 @@ def handle_diagonal_element(strings, i, h, vc, vx, noccp, nvirt, repulsion, matr
 # Step 8: Build FCI Matrix
 # ----------------------------
 # Iterates over determinant pairs and fills the full Hamiltonian
+def generate_single_double_excitations(string, n_occ):
+    """
+    Generate all unique single and double excitations from a given string.
+    Returns a list of new strings (as tuples).
+    """
+    n = len(string)
+    occ_indices = [i for i, x in enumerate(string) if x == 1]
+    virt_indices = [i for i, x in enumerate(string) if x == 0]
+    excitations = []
+
+    # Single excitations
+    for i in occ_indices:
+        for a in virt_indices:
+            new_str = string.copy()
+            new_str[i] = 0
+            new_str[a] = 1
+            excitations.append(tuple(new_str))
+
+    # Double excitations
+    for i1 in range(len(occ_indices)):
+        for i2 in range(i1 + 1, len(occ_indices)):
+            for a1 in range(len(virt_indices)):
+                for a2 in range(a1 + 1, len(virt_indices)):
+                    new_str = string.copy()
+                    new_str[occ_indices[i1]] = 0
+                    new_str[occ_indices[i2]] = 0
+                    new_str[virt_indices[a1]] = 1
+                    new_str[virt_indices[a2]] = 1
+                    excitations.append(tuple(new_str))
+
+    return excitations
+
 def build_fci_matrix(fci_strings, h, vc, vx, noccp, nvirt, noas, nobs, repulsion):
     dim_fci = fci_strings.shape[0]
     matrix = np.zeros((dim_fci, dim_fci))
 
+    spinorbital_map = [
+        map_spinorbital_to_spatial_and_spin(k, noccp, nvirt)
+        for k in range(2 * (noccp + nvirt))
+    ]
+
+    # Build a mapping from string tuple to index
+    string_to_index = {tuple(s): idx for idx, s in enumerate(fci_strings)}
+
     # Diagonal terms
     for i in range(dim_fci):
-        handle_diagonal_element(fci_strings, i, h, vc, vx, noccp, nvirt, repulsion, matrix )
+        handle_diagonal_element(fci_strings, i, h, vc, vx, noccp, nvirt, repulsion, matrix, spinorbital_map)
 
     # Off-diagonal terms
     for i in range(dim_fci):
-        for j in range(i + 1, dim_fci):
-            string1 = fci_strings[i]
-            string2 = fci_strings[j]
-            idiff, diff = get_idiff_and_diff(string1, string2)
-
-            if idiff == 1:
-                compute_single_excitation_element(fci_strings, i, j, h, vc, vx, noccp, nvirt, matrix, diff)
-            elif idiff == 2:
-                compute_double_excitation_element(string1, string2, i, j, vx, noccp, nvirt, matrix, diff)
+        string1 = fci_strings[i]
+        excitations = generate_single_double_excitations(string1, noas + nobs)
+        for ex_str in excitations:
+            j = string_to_index.get(ex_str)
+            if j is not None and j > i:
+                string2 = fci_strings[j]
+                idiff, diff = get_idiff_and_diff(string1, string2)
+                if idiff == 1:
+                    compute_single_excitation_element(fci_strings, i, j, h, vc, vx, noccp, nvirt, matrix, diff, spinorbital_map)
+                elif idiff == 2:
+                    compute_double_excitation_element(string1, string2, i, j, vx, noccp, nvirt, matrix, diff, spinorbital_map)
 
     return matrix
 
@@ -375,35 +417,34 @@ def diagonalize_fci_matrix(matrix):
 
 
 
-
 # ----------------------------
 # Step 10: Run Full Solver
 # ----------------------------
-fci_matrix = build_fci_matrix(fci_strings, h_matrix, vc, vx, noccp, nvirt, noas, nobs, repulsion_energy)
-diagonalize_fci_matrix(fci_matrix)
+def main() -> None:
+    fci_matrix = build_fci_matrix(fci_strings, h_matrix, vc, vx, noccp, nvirt, noas, nobs, repulsion_energy)
+    diagonalize_fci_matrix(fci_matrix)
 
+if __name__ == '__main__':
+    cProfile.run('main()', sort='ncalls')
 
-# In[ ]:
-
-
-# ----------------------------
-# Step 11: Write FCI Matrix to File (Fortran 1-based indexing)
-# ----------------------------
-def write_fci_matrix_to_file_fortran_index(matrix, filename="FCI_matrix.dat"):
-    dim = matrix.shape[0]
-    with open(filename, "w") as f:
-        for i in range(dim):
-            for j in range(dim):
-                f.write(f"{i+1:5d} {j+1:5d} {matrix[i, j]:20.12f})")
+# # ----------------------------
+# # Step 11: Write FCI Matrix to File (Fortran 1-based indexing)
+# # ----------------------------
+# def write_fci_matrix_to_file_fortran_index(matrix, filename="FCI_matrix.dat"):
+#     dim = matrix.shape[0]
+#     with open(filename, "w") as f:
+#         for i in range(dim):
+#             for j in range(dim):
+#                 f.write(f"{i+1:5d} {j+1:5d} {matrix[i, j]:20.12f})")
                 
-write_fci_matrix_to_file_fortran_index(fci_matrix, "FCI_matrix.dat")
+# write_fci_matrix_to_file_fortran_index(fci_matrix, "FCI_matrix.dat")
 
-# Write only the diagonal elements
+# # Write only the diagonal elements
 
-def write_fci_diagonal_to_file_fortran_index(matrix, filename="FCI_matrix_diagonal.dat"):
-    with open(filename, "w") as f:
-        for i in range(matrix.shape[0]):
-            f.write(f"{i+1:5d} {i+1:5d} {matrix[i, i]:20.12f}")
+# def write_fci_diagonal_to_file_fortran_index(matrix, filename="FCI_matrix_diagonal.dat"):
+#     with open(filename, "w") as f:
+#         for i in range(matrix.shape[0]):
+#             f.write(f"{i+1:5d} {i+1:5d} {matrix[i, i]:20.12f}")
 
-write_fci_diagonal_to_file_fortran_index(fci_matrix, "FCI_matrix_diagonal.dat")
+# write_fci_diagonal_to_file_fortran_index(fci_matrix, "FCI_matrix_diagonal.dat")
 
