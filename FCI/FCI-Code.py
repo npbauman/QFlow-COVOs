@@ -91,10 +91,6 @@ vx = read_two_electron_integrals("two_electron_integrals_exchange.dat", norb)
 #print(vc.shape, vx.shape)
 #print(norb)
 
-
-# In[ ]:
-
-
 # ----------------------------
 # Step 4:Generate half alpha and beta strings
 # ----------------------------
@@ -161,10 +157,6 @@ fci_strings = build_fci_strings_from_half_strings( half_str_a, half_str_b, noas,
 #print(noas, nvas, nobs, nvbs)
 #print(fci_strings[0])
 #print(fci_strings[127])
-
-
-# In[ ]:
-
 
 # ----------------------------
 # Step 6: Shared Uitilities Tools
@@ -413,9 +405,6 @@ def diagonalize_fci_matrix(matrix):
     lowest_energy = eigvals[0]
     print("Lowest FCI energy:", f"{lowest_energy:.10f}")
     return lowest_energy, eigvals, eigvecs
-
-
-
 
 # ----------------------------
 # Step 10: Run Full Solver
