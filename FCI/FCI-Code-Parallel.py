@@ -94,98 +94,137 @@ vx = read_two_electron_integrals("two_electron_integrals_exchange.dat", norb)
 #print(norb)
 
 # ----------------------------
-# Step 4:Generate half alpha and beta strings
+# Step 4: Generate half alpha and beta determinants (integers)
 # ----------------------------
 
-def generate_half_strings(norb, n_elec):
-    strings = []
+def generate_half_ints(norb, n_elec):
+    """Generates sorted integer representations of half-determinants."""
+    ints = []
     for occ in combinations(range(norb), n_elec):
-        bitstring = [0] * norb
+        val = 0
         for i in occ:
-            bitstring[i] = 1
-        strings.append(bitstring)
-    return np.array(strings, dtype=int)
-half_str_a = generate_half_strings(norb, noccp)  # alpha strings
-half_str_b = generate_half_strings(norb, noccp)  # beta strings
+            # Bits are ordered from left to right (most to least significant)
+            val |= (1 << (norb - 1 - i))
+        ints.append(val)
+    # Sorting is important for deterministic behavior, matching Fortran if needed.
+    return np.sort(np.array(ints, dtype=np.int64))
 
-# change the order just like fortran 
-half_str_a = half_str_a[np.lexsort(half_str_a.T[::1])]
-half_str_b = half_str_b[np.lexsort(half_str_b.T[::1])]
-
-#print(half_str_a.shape)
-#print(half_str_b.shape)
+half_ints_a = generate_half_ints(norb, noccp)  # alpha determinants
+half_ints_b = generate_half_ints(norb, noccp)  # beta determinants
 
 # ----------------------------
-# Step 5:Construct Full Determinants (FCI Strings)
+# Step 5: Construct Full FCI Determinants (integers)
 # ----------------------------
 
-def build_fci_strings_from_half_strings(half_str_a, half_str_b, noas, nvas, nobs, nvbs):
+def build_fci_ints(half_ints_a, half_ints_b, noas, nvas, nobs, nvbs):
     """
-    Builds full FCI determinant list (strings), combining alpha and beta half strings,
-    laid out in the specific way as the Fortran code (alpha occ.| beta occ.| alpha virt. | beta virt.).
+    Builds full FCI determinant list (as integers), combining alpha and beta half-determinants.
+    The layout is (alpha occ | beta occ | alpha virt | beta virt).
     """
-    alpha_str = half_str_a.shape[0]
-    beta_str  = half_str_b.shape[0]
+    fci_ints = []
+    nstot = noas + nobs + nvas + nvbs
     
-    nos = noas + nobs
-    nvs = nvas + nvbs
-    nstot = nos + nvs
+    for ha in half_ints_a:
+        for hb in half_ints_b:
+            # Extract occupied and virtual parts from half-determinants
+            alpha_occ_part = (ha >> nvas)
+            alpha_virt_part = ha & ((1 << nvas) - 1)
+            beta_occ_part = (hb >> nvbs)
+            beta_virt_part = hb & ((1 << nvbs) - 1)
 
-    strings = []
+            # Assemble the full determinant integer
+            fci_int = (alpha_occ_part << (nobs + nvas + nvbs)) | \
+                      (beta_occ_part << (nvas + nvbs)) | \
+                      (alpha_virt_part << nvbs) | \
+                      beta_virt_part
+            
+            # Safety check for correct electron number
+            if bin(fci_int).count('1') != (noas + nobs):
+                 raise ValueError("Mismatch in total electron count during FCI determinant construction!")
 
-    for i in range(alpha_str):
-        for j in range(beta_str):
-            string = [0] * nstot
+            fci_ints.append(fci_int)
+            
+    return np.array(fci_ints, dtype=np.int64)
 
-            # Alpha string: occupied + virtual
-            string[0:noas] = half_str_a[i, 0:noas]
-            string[nos : nos + nvas] = half_str_a[i, noas : noas + nvas]
-
-            # Beta string: occupied + virtual
-            string[noas : noas + nobs] = half_str_b[j, 0:nobs]
-            string[nos + nvas : nos + nvas + nvbs] = half_str_b[j, nobs : nobs + nvbs]
-
-            # Safety check
-            if sum(string) != (noas + nobs):
-                raise ValueError("Mismatch in total electron count!")
-
-            strings.append(string)
-
-    return np.array(strings, dtype=int)
 noas = nobs = noccp
 nvas = nvbs = nvirt
-fci_strings = build_fci_strings_from_half_strings( half_str_a, half_str_b, noas, nvas, nobs, nvbs)
-#print(fci_strings.shape)
-#print(noas, nvas, nobs, nvbs)
-#print(fci_strings[0])
-#print(fci_strings[127])
+fci_ints = build_fci_ints(half_ints_a, half_ints_b, noas, nvas, nobs, nvbs)
 
 # ----------------------------
 # Step 6: Shared Uitilities Tools
 # ----------------------------
 
-def get_idiff_and_diff(string1, string2):
-    diff = string1 - string2
-    idiff = int(np.sum(np.abs(diff)) // 2)
-    return idiff, diff
+def get_excitation_info_from_ints(int1, int2, nbits):
+    """
+    Calculates the number of differences and the creation/annihilation indices
+    between two integer bitstrings.
+    """
+    xor = int1 ^ int2
+    # Each excitation (particle-hole pair) flips two bits.
+    idiff = bin(xor).count('1') // 2
 
-def get_excitation_indices(diff):
-    plus = [i for i, d in enumerate(diff) if d == -1]
-    minus = [i for i, d in enumerate(diff) if d == 1]
-    return plus, minus
+    plus = []
+    minus = []
+    for i in range(nbits):
+        # Check if the i-th bit (from left, 0-indexed) is set in the XOR result
+        if (xor >> (nbits - 1 - i)) & 1:
+            # If the bit is set, it's a difference. Now check direction.
+            if (int1 >> (nbits - 1 - i)) & 1:
+                # Bit was in int1, so it's an annihilation (minus)
+                minus.append(i)
+            else:
+                # Bit was not in int1 (so it's in int2), it's a creation (plus)
+                plus.append(i)
+    return idiff, plus, minus
+
+def compute_double_iphase_from_int(p, q, r, s, int_string, nbits):
+    """Computes fermionic phase for a double excitation c_p^+ c_q^+ c_s c_r."""
+    def popcount_before(integer, k):
+        if k == 0: return 0
+        # Mask to count set bits in positions 0 to k-1
+        mask = ~((1 << (nbits - k)) - 1)
+        return bin(integer & mask).count('1')
+
+    # p, q are creation; r, s are annihilation. Phase is calculated from initial state.
+    isum = popcount_before(int_string, r)
+    int_string &= ~(1 << (nbits - 1 - r))
+    
+    isum += popcount_before(int_string, s)
+    int_string &= ~(1 << (nbits - 1 - s))
+
+    isum += popcount_before(int_string, q)
+    int_string |= (1 << (nbits - 1 - q))
+
+    isum += popcount_before(int_string, p)
+    
+    return (-1)**isum
+
+def compute_single_iphase_from_int(p, q, int_string, nbits):
+    """Computes fermionic phase for a single excitation c_p^+ c_q."""
+    def popcount_before(integer, k):
+        if k == 0: return 0
+        mask = ~((1 << (nbits - k)) - 1)
+        return bin(integer & mask).count('1')
+
+    # p is creation, q is annihilation. Phase from initial state.
+    isum = popcount_before(int_string, q)
+    int_string &= ~(1 << (nbits - 1 - q))
+    isum += popcount_before(int_string, p)
+    
+    return (-1)**isum
 
 def map_spinorbital_to_spatial_and_spin(k, noccp, nvirt):
     thres1 = noccp
     thres2 = 2 * noccp
     thres3 = 2 * noccp + nvirt
 
-    if k <= thres1 - 1:  # k < noccp → α occupied
+    if k < thres1:  # α occupied
         spatial = k
         spin = 0
-    elif k <= thres2 - 1:  # k in [noccp, 2*noccp-1] → β occupied
+    elif k < thres2:  # β occupied
         spatial = k - noccp
         spin = 1
-    elif k <= thres3 - 1:  # k in [2*noccp, 2*noccp+nvirt-1] → α virtual
+    elif k < thres3:  # α virtual
         spatial = k - noccp
         spin = 0
     else:  # β virtual
@@ -195,34 +234,18 @@ def map_spinorbital_to_spatial_and_spin(k, noccp, nvirt):
     return spatial, spin
 
 
-def compute_iphase(p, q, r, s, string):
-    tmp = string.copy()
-    isum = np.sum(tmp[:r]); tmp[r] = 0
-    isum += np.sum(tmp[:s]); tmp[s] = 0
-    isum += np.sum(tmp[:q]); tmp[q] = 1
-    isum += np.sum(tmp[:p]); tmp[p] = 1
-    return (-1) ** isum
-
 # ----------------------------
 # Step 7: Matrix Construction Functions
 # ----------------------------
 
-def compute_double_excitation_element(string1, string2, i, j, vx, noccp, nvirt, matrix, diff, spinorbital_map):
-    plus, minus = get_excitation_indices(diff)
-    if len(plus) != 2 or len(minus) != 2:
-        return
-
+def compute_double_excitation_element(int1, int2, i, j, vx, noccp, nvirt, matrix, plus, minus, spinorbital_map, nbits):
     p, q = sorted(plus)
     r, s = sorted(minus)
 
-    iphase = compute_iphase(p, q, r, s, string1)
+    iphase = compute_double_iphase_from_int(p, q, r, s, int1, nbits)
 
-    test_string = string1.copy()
-    test_string[r] = 0
-    test_string[s] = 0
-    test_string[p] = 1
-    test_string[q] = 1
-    if not np.array_equal(test_string, string2):
+    # Verify that the excitation is correct by re-applying the bit flips
+    if int1 ^ (1 << (nbits - 1 - p)) ^ (1 << (nbits - 1 - q)) ^ (1 << (nbits - 1 - r)) ^ (1 << (nbits - 1 - s)) != int2:
         return
 
     m, ps = spinorbital_map[p]
@@ -240,28 +263,12 @@ def compute_double_excitation_element(string1, string2, i, j, vx, noccp, nvirt, 
 
     return iphase * val
 
-def compute_single_excitation_element(strings, i, j, h, vc, vx, noccp, nvirt, matrix, diff, spinorbital_map):
-    plus, minus = get_excitation_indices(diff)
-    if len(plus) != 1 or len(minus) != 1:
-        return None
-
+def compute_single_excitation_element(int1, int2, i, j, h, vc, vx, noas, nobs, matrix, plus, minus, spinorbital_map, nbits, ind_set):
     p = plus[0]
     q = minus[0]
 
-    string2 = strings[j]
-    ind_set = [(t, *spinorbital_map[t])
-               for t in range(len(string2)) if string2[t] == 1]
-
-    if len(ind_set) != (noas + nobs):
-        raise ValueError("Occupied orbital count mismatch.")
-
     # Fermionic phase
-    tmp = string2.copy()
-    isum = np.sum(tmp[:q])
-    tmp[q] = 0
-    isum += np.sum(tmp[:p])
-    tmp[p] = 1
-    iphase = (-1) ** isum
+    iphase = compute_single_iphase_from_int(p, q, int1, nbits)
 
     p_h, _ = spinorbital_map[p]
     q_h, _ = spinorbital_map[q]
@@ -277,6 +284,7 @@ def compute_single_excitation_element(strings, i, j, h, vc, vx, noccp, nvirt, ma
         elif ps != ts:
             val = 0.5 * vc[u, u, n, w]
         elif p == t or q == t:
+            # This case seems complex and might need verification against theory
             val = 0.25 * vc[w, n, w, n] - 0.5 * vx[w, n, w, n]
         else:
             val = 0.0
@@ -285,18 +293,14 @@ def compute_single_excitation_element(strings, i, j, h, vc, vx, noccp, nvirt, ma
     total = iphase * (one_e + two_e)
     return total
 
-
-def handle_diagonal_element(strings, i, h, vc, vx, noccp, nvirt, repulsion, matrix, spinorbital_map):
+def handle_diagonal_element(int_string, i, h, vc, vx, noccp, nvirt, repulsion, matrix, spinorbital_map, nbits):
     """
     Compute ⟨D_i | H | D_i⟩: the diagonal matrix element for determinant i.
-    Includes:
-      - One-electron contribution: sum of h(p, p)
-      - Two-electron contribution: 1/2 sum_pq [J - K] or [J] depending on spin
-      - Nuclear repulsion energy
     """
-    string = strings[i]
-    nstot = len(string)
-    ind_set = [l for l in range(nstot) if string[l] == 1]
+    ind_set = []
+    for l in range(nbits):
+        if (int_string >> (nbits - 1 - l)) & 1:
+            ind_set.append(l)
 
     if len(ind_set) != (noas + nobs):
         raise ValueError(f"Occupancy mismatch: expected {noas + nobs}, got {len(ind_set)}")
@@ -305,10 +309,8 @@ def handle_diagonal_element(strings, i, h, vc, vx, noccp, nvirt, repulsion, matr
 
     # One-electron contribution
     for p in ind_set:
-        p_h, spin = spinorbital_map[p]
+        p_h, _ = spinorbital_map[p]
         diag_val += h[p_h, p_h]
-        #print("p =", p, "→ h index =", p_h, "spin =", spin, "h[p,p] =", h[p_h, p_h], "running diag_val =", diag_val)
-
 
     # Two-electron contribution
     for p in ind_set:
@@ -316,14 +318,13 @@ def handle_diagonal_element(strings, i, h, vc, vx, noccp, nvirt, repulsion, matr
             m, ps = spinorbital_map[p]
             n, qs = spinorbital_map[q]
 
-
             if ps == qs:
                 v_pq = 0.5 * vc[m, m, n, n] - vx[n, m, m, n]
             else:
                 v_pq = 0.5 * vc[m, m, n, n]
 
-            diag_val +=  0.5 * v_pq  # Symmetry factor
-            
+            diag_val +=  0.5 * v_pq
+
     # Add ion-ion repulsion
     diag_val += repulsion
 
@@ -333,49 +334,56 @@ def handle_diagonal_element(strings, i, h, vc, vx, noccp, nvirt, repulsion, matr
 # Step 8: Build FCI Matrix
 # ----------------------------
 # Iterates over determinant pairs and fills the full Hamiltonian
-def generate_single_double_excitations(string, n_occ):
+def generate_single_double_excitations(int_string, n_occ, n):
     """
-    Generate all unique single and double excitations from a given string.
-    Returns a list of new strings (as tuples).
+    Generate all unique single and double excitations from a given integer determinant.
+    Returns a list of new integer determinants.
     """
-    n = len(string)
-    occ_indices = [i for i, x in enumerate(string) if x == 1]
-    virt_indices = [i for i, x in enumerate(string) if x == 0]
+    occ_indices = []
+    virt_indices = []
+    for i in range(n):
+        if (int_string >> (n - 1 - i)) & 1:
+            occ_indices.append(i)
+        else:
+            virt_indices.append(i)
+    
     excitations = []
 
     # Single excitations
     for i in occ_indices:
         for a in virt_indices:
-            new_str = string.copy()
-            new_str[i] = 0
-            new_str[a] = 1
-            excitations.append(tuple(new_str))
+            new_int = int_string ^ (1 << (n - 1 - i)) ^ (1 << (n - 1 - a))
+            excitations.append(new_int)
 
     # Double excitations
-    for i1 in range(len(occ_indices)):
-        for i2 in range(i1 + 1, len(occ_indices)):
-            for a1 in range(len(virt_indices)):
-                for a2 in range(a1 + 1, len(virt_indices)):
-                    new_str = string.copy()
-                    new_str[occ_indices[i1]] = 0
-                    new_str[occ_indices[i2]] = 0
-                    new_str[virt_indices[a1]] = 1
-                    new_str[virt_indices[a2]] = 1
-                    excitations.append(tuple(new_str))
+    for i1_idx in range(len(occ_indices)):
+        for i2_idx in range(i1_idx + 1, len(occ_indices)):
+            for a1_idx in range(len(virt_indices)):
+                for a2_idx in range(a1_idx + 1, len(virt_indices)):
+                    i1 = occ_indices[i1_idx]
+                    i2 = occ_indices[i2_idx]
+                    a1 = virt_indices[a1_idx]
+                    a2 = virt_indices[a2_idx]
+                    
+                    new_int = int_string ^ (1 << (n - 1 - i1)) ^ (1 << (n - 1 - i2)) \
+                                       ^ (1 << (n - 1 - a1)) ^ (1 << (n - 1 - a2))
+                    excitations.append(new_int)
 
     return excitations
 
 # These will be set in the parent process before parallel launch
 _global_data = {}
 
-def init_worker(fci_strings_, string_to_index_, h_, vc_, vx_,
+def init_worker(fci_ints_, int_to_index_, int_to_ind_set_, h_, vc_, vx_, nstot_,
                 noccp_, nvirt_, noas_, nobs_, shm_name_, matrix_shape_, spinorbital_map_):
     global _global_data
-    _global_data['fci_strings'] = fci_strings_
-    _global_data['string_to_index'] = string_to_index_
+    _global_data['fci_ints_'] = fci_ints_
+    _global_data['int_to_index'] = int_to_index_
+    _global_data['int_to_ind_set'] = int_to_ind_set_
     _global_data['h'] = h_
     _global_data['vc'] = vc_
     _global_data['vx'] = vx_
+    _global_data['nstot'] = nstot_
     _global_data['noccp'] = noccp_
     _global_data['nvirt'] = nvirt_
     _global_data['noas'] = noas_
@@ -395,8 +403,9 @@ def off_diag_worker(i):
         print(f"[Worker {i}] Shared memory error: {e}")
         return
 
-    fci_strings = gd['fci_strings']
-    string_to_index = gd['string_to_index']
+    fci_ints_ = gd['fci_ints_']
+    int_to_index = gd['int_to_index']
+    int_to_ind_set = gd['int_to_ind_set']
     h = gd['h']
     vc = gd['vc']
     vx = gd['vx']
@@ -404,71 +413,77 @@ def off_diag_worker(i):
     nvirt = gd['nvirt']
     noas = gd['noas']
     nobs = gd['nobs']
+    nstot = gd['nstot']
     spinorbital_map = gd['spinorbital_map']
 
-    string1 = fci_strings[i]
-    excitations = generate_single_double_excitations(string1, noas + nobs)
-
-    for ex_str in excitations:
-        j = string_to_index.get(ex_str)
+    int1 = fci_ints[i]
+    excitations_int = generate_single_double_excitations(int1, noas + nobs, nstot)
+    
+    for int2 in excitations_int:
+        j = int_to_index.get(int2)
+        # Only compute for upper triangle (j > i)
         if j is not None and j > i:
-            string2 = fci_strings[j]
-            idiff, diff = get_idiff_and_diff(string1, string2)
-            val = None
+            idiff, plus, minus = get_excitation_info_from_ints(int1, int2, nstot)
             if idiff == 1:
-                val = compute_single_excitation_element(
-                    fci_strings, i, j, h, vc, vx, noccp, nvirt, None, diff, spinorbital_map
-                )
+                val=compute_single_excitation_element(int1, int2, i, j, h, vc, vx, noas, nobs, matrix, plus, minus, spinorbital_map, nstot, int_to_ind_set[int2])
             elif idiff == 2:
-                val = compute_double_excitation_element(
-                    string1, string2, i, j, vx, noccp, nvirt, None, diff, spinorbital_map
-                )
+                val=compute_double_excitation_element(int1, int2, i, j, vx, noccp, nvirt, matrix, plus, minus, spinorbital_map, nstot)
 
             if val is not None:
                 matrix[i, j] += val
-                matrix[j, i] += val
 
     existing_shm.close()
 
 
-def build_fci_matrix(fci_strings, h, vc, vx, noccp, nvirt, noas, nobs, repulsion):
-
-    dim_fci = fci_strings.shape[0]
+def build_fci_matrix(fci_ints, h, vc, vx, noccp, nvirt, noas, nobs, repulsion):
+    """Iterates over determinant pairs and fills the full Hamiltonian matrix."""
+    dim_fci = fci_ints.shape[0]
     matrix_shape = (dim_fci, dim_fci)
     shm = shared_memory.SharedMemory(create=True, size=np.prod(matrix_shape) * 8)
     matrix = np.ndarray(matrix_shape, dtype=np.float64, buffer=shm.buf)
     matrix[:] = 0.0
+    nstot = noas + nobs + nvas + nvbs
 
     spinorbital_map = [
         map_spinorbital_to_spatial_and_spin(k, noccp, nvirt)
         for k in range(2 * (noccp + nvirt))
     ]
-    string_to_index = {tuple(s): idx for idx, s in enumerate(fci_strings)}
+
+    # Build a mapping from integer determinant to its index in the FCI vector
+    int_to_index = {s: idx for idx, s in enumerate(fci_ints)}
+
+    # Pre-compute occupied indices for each determinant to avoid re-calculation
+    int_to_ind_set = {
+        s: [(t, *spinorbital_map[t]) for t in range(nstot) if (s >> (nstot - 1 - t)) & 1]
+        for s in fci_ints
+    }
 
     # Diagonal terms
     for i in range(dim_fci):
-        handle_diagonal_element(fci_strings, i, h, vc, vx, noccp, nvirt, repulsion, matrix, spinorbital_map)
+        handle_diagonal_element(fci_ints[i], i, h, vc, vx, noccp, nvirt, repulsion, matrix, spinorbital_map, nstot)
 
     # Off-diagonal terms
     # Start worker pool with shared initialization
     with mp.Pool(
         initializer=init_worker,
-        initargs=(fci_strings, string_to_index, h, vc, vx,
+        initargs=(fci_ints, int_to_index, int_to_ind_set, h, vc, vx, nstot,
                   noccp, nvirt, noas, nobs, shm.name, matrix_shape, spinorbital_map)
     ) as pool:
         pool.map(off_diag_worker, range(dim_fci))
 
     final_matrix = matrix.copy()
+    # Symmetrize the matrix since we only filled the upper triangle
+    final_matrix += final_matrix.T - np.diag(final_matrix.diagonal())    
     shm.close()
     shm.unlink()
     return final_matrix
-
 
 # ----------------------------
 # Step 9: Diagonalize FCI Matrix
 # ----------------------------
 
 def diagonalize_fci_matrix(matrix):
+    """Diagonalizes the FCI matrix to find the lowest eigenvalue."""
     eigvals, eigvecs = eigsh(matrix, k=1, which='SA')
     lowest_energy = eigvals[0]
     print("Lowest FCI energy:", f"{lowest_energy:.10f}")
@@ -478,30 +493,10 @@ def diagonalize_fci_matrix(matrix):
 # Step 10: Run Full Solver
 # ----------------------------
 def main() -> None:
-    fci_matrix = build_fci_matrix(fci_strings, h_matrix, vc, vx, noccp, nvirt, noas, nobs, repulsion_energy)
+    """Main execution function."""
+    fci_matrix = build_fci_matrix(fci_ints, h_matrix, vc, vx, noccp, nvirt, noas, nobs, repulsion_energy)
     diagonalize_fci_matrix(fci_matrix)
 
 if __name__ == '__main__':
     cProfile.run('main()', sort='ncalls')
-
-# # ----------------------------
-# # Step 11: Write FCI Matrix to File (Fortran 1-based indexing)
-# # ----------------------------
-# def write_fci_matrix_to_file_fortran_index(matrix, filename="FCI_matrix.dat"):
-#     dim = matrix.shape[0]
-#     with open(filename, "w") as f:
-#         for i in range(dim):
-#             for j in range(dim):
-#                 f.write(f"{i+1:5d} {j+1:5d} {matrix[i, j]:20.12f})")
-                
-# write_fci_matrix_to_file_fortran_index(fci_matrix, "FCI_matrix.dat")
-
-# # Write only the diagonal elements
-
-# def write_fci_diagonal_to_file_fortran_index(matrix, filename="FCI_matrix_diagonal.dat"):
-#     with open(filename, "w") as f:
-#         for i in range(matrix.shape[0]):
-#             f.write(f"{i+1:5d} {i+1:5d} {matrix[i, i]:20.12f}")
-
-# write_fci_diagonal_to_file_fortran_index(fci_matrix, "FCI_matrix_diagonal.dat")
 
