@@ -1,0 +1,14 @@
+LICENSE
+1
+tests/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+build/
+dist/
+Saved_Matrices/
+*.log
+.DS_Store

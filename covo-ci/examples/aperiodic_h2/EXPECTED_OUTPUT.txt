@@ -1,0 +1,13 @@
+Expected fci-suite output for this example (aperiodic mode), H2/STO-3G,
+R = 0.74 Angstrom, generated with PySCF and cross-checked against
+PySCF's own native FCI solver (pyscf.fci.FCI).
+
+Full CI (--excitation-level full), all 4 roots:
+  state 1: E = -1.1372838345   multiplicity = 1
+  state 2: E = -0.5307733570   multiplicity = 3
+  state 3: E = -0.1683524330   multiplicity = 1
+  state 4: E =  0.4831426731   multiplicity = 1
+
+These match PySCF's native FCI energies for this molecule/basis to
+all 10 reported digits, confirming the aperiodic solver's matrix
+elements and spin-orbital integral handling are correct.

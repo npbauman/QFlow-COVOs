@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "covo-ci"
+version = "0.1.0"
+description = "Unified Full CI / Select CI solver for aperiodic and periodic integral file formats."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [
+    { name = "Bhumika" }
+]
+dependencies = [
+    "numpy>=1.21",
+    "scipy>=1.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+covo-ci = "covo_ci.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E741",  # ambiguous variable names (i, l, etc. are standard in this domain: orbital indices)
+    "E731",  # lambda assignment: used for small local closures over (noccp, nvirt)
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

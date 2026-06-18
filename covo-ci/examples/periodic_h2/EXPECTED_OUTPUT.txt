@@ -1,0 +1,20 @@
+Expected fci-suite output for this example (periodic mode), generated
+with the same H2/STO-3G geometry as the aperiodic_h2 example but with
+the same chemist-notation MO ERI tensor written into BOTH the Coulomb
+and exchange integral files (a placeholder choice; see README "About
+the example data" section).
+
+Full CI (--excitation-level full), first 4 roots:
+  state 1: E = -1.8156086778   multiplicity = 1
+  state 2: E = -1.2057309155   multiplicity = 3
+  state 3: E = -0.8479645013   multiplicity = 1
+
+These energies will NOT match a textbook/PySCF H2 FCI calculation,
+because the periodic solver's Coulomb/exchange convention is specific
+to the in-house integral generation pipeline this code was built
+against, and this example does not attempt to reproduce that pipeline
+exactly. Use this example only to confirm the code runs and to check
+your own installation reproduces these exact numbers -- substitute
+your own ion_ion.dat / one_electron_integrals.dat /
+two_electron_integrals_coulomb.dat / two_electron_integrals_exchange.dat
+files from your real periodic calculations for production use.
