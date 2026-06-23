@@ -18,11 +18,8 @@ truncation** (Select CI: HF, CIS, CISD, CISDT, ... up to Full CI).
 > Orbitals (COVOs), the orbital framework this code is built around.
 > "ci" reflects that this package handles the (Select) CI matrix
 > construction and diagonalization stage.
-# A separate, companion
-#> package, [`qflow-suite`](https://github.com/<your-org>/qflow-suite),
-#> implements the QFlow correlation-energy optimization method, which
-#> consumes the `FCI_matrix.dat` file this package can produce via
-#> `--save-matrix` (see [Quick start](#quick-start) below).
+> 
+A separate, companion package, [`qflow-suite`](GitHub address), implements the QFlow correlation-energy optimization method, which consumes the `FCI_matrix.dat` file this package can produce via `--save-matrix` (see [Quick start](#quick-start) below).
 
 ## Contents
 
