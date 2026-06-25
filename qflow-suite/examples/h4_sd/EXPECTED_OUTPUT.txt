@@ -1,0 +1,52 @@
+Expected output for the bundled H4/STO-3G example (linear H4 chain,
+bond lengths 1.0 Angstrom, generated with scripts/generate_h4_example.py).
+
+This is a minimal but nontrivial active-space test case:
+  noas = nobs = 2 (occupied spin-orbitals per spin channel)
+  nvas = nvbs = 2 (virtual spin-orbitals per spin channel)
+  nactives = comb(2,2) * comb(2,2) = 1  (exactly one active space)
+
+Because there is only one active space and it spans the entire
+virtual/occupied space (no "rest of system" left over to mark
+inactive), this example is primarily a connectivity/smoke test for
+the covo-ci -> qflow-suite pipeline, not a demonstration of QFlow's
+multi-active-space iterative refinement (which requires larger
+systems with several active spaces). It is, however, a genuine and
+useful correctness check: SDTQ should recover the FCI energy almost
+exactly, since with all four excitation ranks included and only one
+active space, there is no remaining truncation error.
+
+Step 1: covo-ci FCI reference (Full CI, exact for this system)
+----------------------------------------------------------------
+  covo-ci run --mode aperiodic --input-dir . --excitation-level full \
+              --n-roots 1 --save-matrix FCI_matrix.dat
+
+  state 1: E = -2.1663874486   multiplicity = 1
+
+Step 2: QFlow-SD (singles + doubles only)
+----------------------------------------------------------------
+  qflow-suite run --level sd --n-elec 4 --norb 4 \
+              --matrix-file FCI_matrix.dat --actspin-file nactspin_fortran.dat \
+              --actspin-columns 8
+
+  Final QFlow-SD energy: approximately -2.1663060 (converged after 20
+  global iterations). This is variationally above the exact FCI
+  energy, as expected for an SD-truncated method -- the residual
+  ~8e-5 Hartree gap corresponds to triples/quadruples correlation
+  energy not captured at this truncation level.
+
+Step 3: QFlow-SDTQ (singles, doubles, triples, quadruples)
+----------------------------------------------------------------
+  qflow-suite run --level sdtq --n-elec 4 --norb 4 \
+              --matrix-file FCI_matrix.dat --actspin-file nactspin_fortran.dat
+
+  Final QFlow-SDTQ energy: approximately -2.1663874 (converged after
+  20 global iterations), matching the exact FCI energy to ~5e-8
+  Hartree -- confirming both the covo-ci matrix and the QFlow-SDTQ
+  wrapper are working correctly together.
+
+Note: exact converged values may vary in the last 1-2 reported digits
+depending on numpy/scipy/numba versions and BLAS backend; the
+important checks are (1) QFlow-SD lands close to but above the FCI
+energy, and (2) QFlow-SDTQ converges much closer to the FCI energy
+than QFlow-SD does.
